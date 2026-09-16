@@ -49,6 +49,7 @@ try {
   const { useState, useEffect, useRef, useCallback } = React;
   let db = null;
   let firebaseReady = false;
+  const APP_BUILD = "2026-09-16-3";
   try {
     if (FIREBASE_CONFIG.apiKey && FIREBASE_CONFIG.apiKey !== "PASTE_YOUR_API_KEY") {
       firebase.initializeApp(FIREBASE_CONFIG);
@@ -634,45 +635,61 @@ try {
     }
     async function joinRoom(id, passcodeAttempt) {
       setBusy(true);
-      const room = await getRoomDoc(id);
-      if (!room) {
+      try {
+        const room = await getRoomDoc(id);
+        if (!room) {
+          setBusy(false);
+          setJoinPass((p) => ({ ...p, error: "Room no longer exists." }));
+          setCodeError("No room found with that code.");
+          return;
+        }
+        if (room.isPrivate && room.passcode !== passcodeAttempt) {
+          setBusy(false);
+          setJoinPass((p) => ({ ...p, error: "Wrong passcode." }));
+          return;
+        }
+        if (!room.players[profile.id]) {
+          room.players[profile.id] = { name: profile.name, filled: 0, mistakes: 0, finished: false, finishTime: null, joinedAt: (/* @__PURE__ */ new Date()).toISOString() };
+          await updateRoomDoc(id, { players: room.players });
+        }
         setBusy(false);
-        setJoinPass((p) => ({ ...p, error: "Room no longer exists." }));
-        setCodeError("No room found with that code.");
-        return;
-      }
-      if (room.isPrivate && room.passcode !== passcodeAttempt) {
+        setJoinPass({ room: null, value: "", error: "" });
+        onEnterRoom(id);
+      } catch (err) {
+        console.error("Join room failed:", err);
         setBusy(false);
-        setJoinPass((p) => ({ ...p, error: "Wrong passcode." }));
-        return;
+        const msg = err.message || String(err);
+        setJoinPass((p) => ({ ...p, error: msg }));
+        setCodeError(msg);
       }
-      if (!room.players[profile.id]) {
-        room.players[profile.id] = { name: profile.name, filled: 0, mistakes: 0, finished: false, finishTime: null, joinedAt: (/* @__PURE__ */ new Date()).toISOString() };
-        await updateRoomDoc(id, { players: room.players });
-      }
-      setBusy(false);
-      setJoinPass({ room: null, value: "", error: "" });
-      onEnterRoom(id);
     }
     async function joinByCode() {
       const code = codeInput.trim().toUpperCase();
       if (!code) return;
       setCodeError("");
-      const room = await getRoomDoc(code);
-      if (!room) {
-        setCodeError("No room found with that code. Double-check it with whoever created it.");
-        return;
+      setBusy(true);
+      try {
+        const room = await getRoomDoc(code);
+        setBusy(false);
+        if (!room) {
+          setCodeError("No room found with that code. Double-check it with whoever created it.");
+          return;
+        }
+        if (room.isPrivate) {
+          setJoinPass({ room: code, value: "", error: "" });
+          return;
+        }
+        joinRoom(code, "");
+      } catch (err) {
+        console.error("Join by code failed:", err);
+        setBusy(false);
+        setCodeError(err.message || String(err));
       }
-      if (room.isPrivate) {
-        setJoinPass({ room: code, value: "", error: "" });
-        return;
-      }
-      joinRoom(code, "");
     }
     if (!firebaseReady) {
       return /* @__PURE__ */ React.createElement("div", { className: "max-w-md mx-auto px-4 pt-16 text-center" }, /* @__PURE__ */ React.createElement("button", { onClick: onBack, className: "text-slate-500 flex items-center gap-1 mb-8" }, /* @__PURE__ */ React.createElement(IconArrowLeft, { size: 18 }), " Home"), /* @__PURE__ */ React.createElement("h2", { className: "font-display text-xl text-slate-900 mb-2" }, "Multiplayer isn't set up yet"), /* @__PURE__ */ React.createElement("p", { className: "text-sm text-slate-500" }, "Add your Firebase config at the top of ", /* @__PURE__ */ React.createElement("code", null, "index.html"), " to turn on rooms. See README.md for the 5-minute setup."));
     }
-    return /* @__PURE__ */ React.createElement("div", { className: "max-w-md mx-auto px-4 pb-10" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between py-4" }, /* @__PURE__ */ React.createElement("button", { onClick: onBack, className: "text-slate-500 flex items-center gap-1" }, /* @__PURE__ */ React.createElement(IconArrowLeft, { size: 18 }), " Home"), /* @__PURE__ */ React.createElement("h1", { className: "font-display text-lg text-slate-900" }, "Multiplayer rooms"), /* @__PURE__ */ React.createElement("button", { onClick: () => setShowCreate(true), className: "text-blue-600" }, /* @__PURE__ */ React.createElement(IconPlus, { size: 22 }))), /* @__PURE__ */ React.createElement("div", { className: "bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 mb-3 text-center" }, /* @__PURE__ */ React.createElement("p", { className: "text-[11px] text-amber-800" }, "Firebase project: ", /* @__PURE__ */ React.createElement("span", { className: "font-mono font-semibold" }, FIREBASE_CONFIG.projectId || "unknown")), /* @__PURE__ */ React.createElement("p", { className: "text-[10px] text-amber-700 mt-0.5" }, `Check this exact line on every device before reporting a room as "missing" \u2014 if the project name here is different on your phone vs your PC, they are on two separate databases and can never see each other's rooms no matter what else is fixed.`)), /* @__PURE__ */ React.createElement("div", { className: "bg-white border border-slate-200 rounded-xl px-3 py-3 mb-3" }, /* @__PURE__ */ React.createElement("p", { className: "text-xs text-slate-500 mb-1.5" }, "Have a room code? Join it directly \u2014 this works even if the room isn't showing up in the list below."), /* @__PURE__ */ React.createElement("div", { className: "flex gap-2" }, /* @__PURE__ */ React.createElement(
+    return /* @__PURE__ */ React.createElement("div", { className: "max-w-md mx-auto px-4 pb-10" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between py-4" }, /* @__PURE__ */ React.createElement("button", { onClick: onBack, className: "text-slate-500 flex items-center gap-1" }, /* @__PURE__ */ React.createElement(IconArrowLeft, { size: 18 }), " Home"), /* @__PURE__ */ React.createElement("h1", { className: "font-display text-lg text-slate-900" }, "Multiplayer rooms"), /* @__PURE__ */ React.createElement("button", { onClick: () => setShowCreate(true), className: "text-blue-600" }, /* @__PURE__ */ React.createElement(IconPlus, { size: 22 }))), /* @__PURE__ */ React.createElement("div", { className: "bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 mb-3 text-center" }, /* @__PURE__ */ React.createElement("p", { className: "text-[11px] text-amber-800" }, "Firebase project: ", /* @__PURE__ */ React.createElement("span", { className: "font-mono font-semibold" }, FIREBASE_CONFIG.projectId || "unknown"), " \xB7 ", "build ", /* @__PURE__ */ React.createElement("span", { className: "font-mono" }, APP_BUILD)), /* @__PURE__ */ React.createElement("p", { className: "text-[10px] text-amber-700 mt-0.5" }, `Check both lines on every device before reporting a room as "missing" \u2014 if either the project name or the build number differs between your phone and PC, one of them is running an old cached copy of the page (hard-refresh it, or wait for GitHub Pages to finish redeploying) and they cannot see each other's rooms until that's fixed.`)), /* @__PURE__ */ React.createElement("div", { className: "bg-white border border-slate-200 rounded-xl px-3 py-3 mb-3" }, /* @__PURE__ */ React.createElement("p", { className: "text-xs text-slate-500 mb-1.5" }, "Have a room code? Join it directly \u2014 this works even if the room isn't showing up in the list below."), /* @__PURE__ */ React.createElement("div", { className: "flex gap-2" }, /* @__PURE__ */ React.createElement(
       "input",
       {
         value: codeInput,
