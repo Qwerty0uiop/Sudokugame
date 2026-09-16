@@ -34,7 +34,7 @@
 -->
 <script>
   const FIREBASE_CONFIG = {
-     apiKey: "AIzaSyAWL7DwvBpeL91Xn1_dDgCTdSvTibhDhXo",
+    apiKey: "AIzaSyAWL7DwvBpeL91Xn1_dDgCTdSvTibhDhXo",
     authDomain: "sudoku-0-ee404.firebaseapp.com",
     projectId: "sudoku-0-ee404",
     storageBucket: "sudoku-0-ee404.firebasestorage.app",
@@ -583,6 +583,9 @@ try {
     const [joinPass, setJoinPass] = useState({ room: null, value: "", error: "" });
     const [busy, setBusy] = useState(false);
     const [listError, setListError] = useState(null);
+    const [createError, setCreateError] = useState(null);
+    const [codeInput, setCodeInput] = useState("");
+    const [codeError, setCodeError] = useState("");
     useEffect(() => {
       if (!firebaseReady) {
         setRooms([]);
@@ -603,24 +606,31 @@ try {
     }, []);
     async function createRoom({ name, difficulty, isPrivate, passcode }) {
       setBusy(true);
-      const { puzzle, solution } = await generatePuzzleAsync(difficulty);
-      const id = genRoomCode();
-      const startTime = (/* @__PURE__ */ new Date()).toISOString();
-      const room = {
-        id,
-        name: name || `Room ${id}`,
-        isPrivate,
-        passcode: isPrivate ? passcode : "",
-        difficulty,
-        puzzle,
-        solution,
-        startTime,
-        players: { [profile.id]: { name: profile.name, filled: 0, mistakes: 0, finished: false, finishTime: null, joinedAt: startTime } }
-      };
-      await createRoomDoc(room);
-      setBusy(false);
-      setShowCreate(false);
-      onEnterRoom(id);
+      setCreateError(null);
+      try {
+        const { puzzle, solution } = await generatePuzzleAsync(difficulty);
+        const id = genRoomCode();
+        const startTime = (/* @__PURE__ */ new Date()).toISOString();
+        const room = {
+          id,
+          name: name || `Room ${id}`,
+          isPrivate,
+          passcode: isPrivate ? passcode : "",
+          difficulty,
+          puzzle,
+          solution,
+          startTime,
+          players: { [profile.id]: { name: profile.name, filled: 0, mistakes: 0, finished: false, finishTime: null, joinedAt: startTime } }
+        };
+        await createRoomDoc(room);
+        setBusy(false);
+        setShowCreate(false);
+        onEnterRoom(id);
+      } catch (err) {
+        console.error("Room creation failed:", err);
+        setBusy(false);
+        setCreateError(err.message || String(err));
+      }
     }
     async function joinRoom(id, passcodeAttempt) {
       setBusy(true);
@@ -628,6 +638,7 @@ try {
       if (!room) {
         setBusy(false);
         setJoinPass((p) => ({ ...p, error: "Room no longer exists." }));
+        setCodeError("No room found with that code.");
         return;
       }
       if (room.isPrivate && room.passcode !== passcodeAttempt) {
@@ -643,10 +654,37 @@ try {
       setJoinPass({ room: null, value: "", error: "" });
       onEnterRoom(id);
     }
+    async function joinByCode() {
+      const code = codeInput.trim().toUpperCase();
+      if (!code) return;
+      setCodeError("");
+      const room = await getRoomDoc(code);
+      if (!room) {
+        setCodeError("No room found with that code. Double-check it with whoever created it.");
+        return;
+      }
+      if (room.isPrivate) {
+        setJoinPass({ room: code, value: "", error: "" });
+        return;
+      }
+      joinRoom(code, "");
+    }
     if (!firebaseReady) {
       return /* @__PURE__ */ React.createElement("div", { className: "max-w-md mx-auto px-4 pt-16 text-center" }, /* @__PURE__ */ React.createElement("button", { onClick: onBack, className: "text-slate-500 flex items-center gap-1 mb-8" }, /* @__PURE__ */ React.createElement(IconArrowLeft, { size: 18 }), " Home"), /* @__PURE__ */ React.createElement("h2", { className: "font-display text-xl text-slate-900 mb-2" }, "Multiplayer isn't set up yet"), /* @__PURE__ */ React.createElement("p", { className: "text-sm text-slate-500" }, "Add your Firebase config at the top of ", /* @__PURE__ */ React.createElement("code", null, "index.html"), " to turn on rooms. See README.md for the 5-minute setup."));
     }
-    return /* @__PURE__ */ React.createElement("div", { className: "max-w-md mx-auto px-4 pb-10" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between py-4" }, /* @__PURE__ */ React.createElement("button", { onClick: onBack, className: "text-slate-500 flex items-center gap-1" }, /* @__PURE__ */ React.createElement(IconArrowLeft, { size: 18 }), " Home"), /* @__PURE__ */ React.createElement("h1", { className: "font-display text-lg text-slate-900" }, "Multiplayer rooms"), /* @__PURE__ */ React.createElement("button", { onClick: () => setShowCreate(true), className: "text-blue-600" }, /* @__PURE__ */ React.createElement(IconPlus, { size: 22 }))), /* @__PURE__ */ React.createElement("p", { className: "text-center text-[11px] text-slate-300 mb-2" }, "Connected to Firebase project: ", /* @__PURE__ */ React.createElement("span", { className: "font-mono" }, FIREBASE_CONFIG.projectId || "unknown"), " \xB7 ", "Both devices must show the same project here, or created rooms won't be visible to each other."), listError && /* @__PURE__ */ React.createElement("div", { className: "bg-rose-50 border border-rose-100 text-rose-700 text-xs rounded-lg px-3 py-2 mb-3" }, "Couldn't load rooms: ", listError, ". This is almost always Firestore security rules blocking reads \u2014 see the README's troubleshooting section."), rooms === null && /* @__PURE__ */ React.createElement("p", { className: "text-center text-slate-400 py-10" }, "Loading rooms\u2026"), rooms && rooms.length === 0 && !listError && /* @__PURE__ */ React.createElement("div", { className: "text-center text-slate-400 py-10" }, "No rooms yet. Create one to get started."), /* @__PURE__ */ React.createElement("div", { className: "space-y-2" }, rooms && rooms.map((r) => /* @__PURE__ */ React.createElement(
+    return /* @__PURE__ */ React.createElement("div", { className: "max-w-md mx-auto px-4 pb-10" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between py-4" }, /* @__PURE__ */ React.createElement("button", { onClick: onBack, className: "text-slate-500 flex items-center gap-1" }, /* @__PURE__ */ React.createElement(IconArrowLeft, { size: 18 }), " Home"), /* @__PURE__ */ React.createElement("h1", { className: "font-display text-lg text-slate-900" }, "Multiplayer rooms"), /* @__PURE__ */ React.createElement("button", { onClick: () => setShowCreate(true), className: "text-blue-600" }, /* @__PURE__ */ React.createElement(IconPlus, { size: 22 }))), /* @__PURE__ */ React.createElement("div", { className: "bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 mb-3 text-center" }, /* @__PURE__ */ React.createElement("p", { className: "text-[11px] text-amber-800" }, "Firebase project: ", /* @__PURE__ */ React.createElement("span", { className: "font-mono font-semibold" }, FIREBASE_CONFIG.projectId || "unknown")), /* @__PURE__ */ React.createElement("p", { className: "text-[10px] text-amber-700 mt-0.5" }, `Check this exact line on every device before reporting a room as "missing" \u2014 if the project name here is different on your phone vs your PC, they are on two separate databases and can never see each other's rooms no matter what else is fixed.`)), /* @__PURE__ */ React.createElement("div", { className: "bg-white border border-slate-200 rounded-xl px-3 py-3 mb-3" }, /* @__PURE__ */ React.createElement("p", { className: "text-xs text-slate-500 mb-1.5" }, "Have a room code? Join it directly \u2014 this works even if the room isn't showing up in the list below."), /* @__PURE__ */ React.createElement("div", { className: "flex gap-2" }, /* @__PURE__ */ React.createElement(
+      "input",
+      {
+        value: codeInput,
+        onChange: (e) => {
+          setCodeInput(e.target.value);
+          setCodeError("");
+        },
+        onKeyDown: (e) => e.key === "Enter" && joinByCode(),
+        placeholder: "e.g. K3P9QZ",
+        className: "flex-1 border border-slate-200 rounded-lg px-3 py-2 text-sm uppercase tracking-wide"
+      }
+    ), /* @__PURE__ */ React.createElement("button", { onClick: joinByCode, disabled: busy, className: "bg-slate-800 text-white rounded-lg px-4 text-sm font-medium" }, "Join")), codeError && /* @__PURE__ */ React.createElement("p", { className: "text-xs text-rose-500 mt-1.5" }, codeError)), createError && /* @__PURE__ */ React.createElement("div", { className: "bg-rose-50 border border-rose-100 text-rose-700 text-xs rounded-lg px-3 py-2 mb-3" }, "Couldn't create the room: ", createError, ". This is almost always Firestore security rules blocking writes \u2014 see the README's troubleshooting section."), listError && /* @__PURE__ */ React.createElement("div", { className: "bg-rose-50 border border-rose-100 text-rose-700 text-xs rounded-lg px-3 py-2 mb-3" }, "Couldn't load rooms: ", listError, ". This is almost always Firestore security rules blocking reads \u2014 see the README's troubleshooting section."), rooms === null && /* @__PURE__ */ React.createElement("p", { className: "text-center text-slate-400 py-10" }, "Loading rooms\u2026"), rooms && rooms.length === 0 && !listError && /* @__PURE__ */ React.createElement("div", { className: "text-center text-slate-400 py-6" }, "No rooms in the public list yet \u2014 create one, or join by code above."), /* @__PURE__ */ React.createElement("div", { className: "space-y-2" }, rooms && rooms.map((r) => /* @__PURE__ */ React.createElement(
       "button",
       {
         key: r.id,
@@ -757,7 +795,7 @@ try {
       if (a[1].finished && b[1].finished) return new Date(a[1].finishTime) - new Date(b[1].finishTime);
       return b[1].filled - a[1].filled;
     });
-    return /* @__PURE__ */ React.createElement("div", { className: "max-w-md mx-auto px-4 pb-10" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between py-4" }, /* @__PURE__ */ React.createElement("button", { onClick: leaveRoom, className: "text-slate-500 flex items-center gap-1" }, /* @__PURE__ */ React.createElement(IconArrowLeft, { size: 18 }), " Leave"), /* @__PURE__ */ React.createElement("div", { className: "text-center" }, /* @__PURE__ */ React.createElement("p", { className: "font-display text-sm text-slate-900 flex items-center gap-1 justify-center" }, room.isPrivate && /* @__PURE__ */ React.createElement(IconLock, { size: 12 }), " ", room.name), /* @__PURE__ */ React.createElement("p", { className: "text-[11px] text-slate-400" }, "started ", fmtClock(room.startTime), " \xB7 ", timeAgo(room.startTime))), /* @__PURE__ */ React.createElement("button", { onClick: () => setShowSettings(true), className: "text-slate-500" }, /* @__PURE__ */ React.createElement(IconSettings, { size: 20 }))), /* @__PURE__ */ React.createElement("button", { onClick: () => setShowPlayers(true), className: "w-full flex items-center justify-between bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 mb-3 text-sm text-slate-600" }, /* @__PURE__ */ React.createElement("span", { className: "flex items-center gap-1.5" }, /* @__PURE__ */ React.createElement(IconUsers, { size: 15 }), " ", players.length, " in room"), /* @__PURE__ */ React.createElement("span", { className: "text-blue-600" }, "View players")), /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between mb-3 text-sm text-slate-500" }, /* @__PURE__ */ React.createElement("span", null, settings.timer ? fmtTimer(game.seconds) : "--:--"), /* @__PURE__ */ React.createElement("span", null, "Mistakes ", game.mistakes, "/", settings.mistakesLimit ? 3 : "\u221E"), /* @__PURE__ */ React.createElement("span", null, game.filledCount, "/", game.totalToFill)), /* @__PURE__ */ React.createElement(
+    return /* @__PURE__ */ React.createElement("div", { className: "max-w-md mx-auto px-4 pb-10" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between py-4" }, /* @__PURE__ */ React.createElement("button", { onClick: leaveRoom, className: "text-slate-500 flex items-center gap-1" }, /* @__PURE__ */ React.createElement(IconArrowLeft, { size: 18 }), " Leave"), /* @__PURE__ */ React.createElement("div", { className: "text-center" }, /* @__PURE__ */ React.createElement("p", { className: "font-display text-sm text-slate-900 flex items-center gap-1 justify-center" }, room.isPrivate && /* @__PURE__ */ React.createElement(IconLock, { size: 12 }), " ", room.name), /* @__PURE__ */ React.createElement("p", { className: "text-[11px] text-slate-400" }, "started ", fmtClock(room.startTime), " \xB7 ", timeAgo(room.startTime)), /* @__PURE__ */ React.createElement("p", { className: "text-[10px] text-slate-300" }, "code: ", /* @__PURE__ */ React.createElement("span", { className: "font-mono" }, room.id))), /* @__PURE__ */ React.createElement("button", { onClick: () => setShowSettings(true), className: "text-slate-500" }, /* @__PURE__ */ React.createElement(IconSettings, { size: 20 }))), /* @__PURE__ */ React.createElement("button", { onClick: () => setShowPlayers(true), className: "w-full flex items-center justify-between bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 mb-3 text-sm text-slate-600" }, /* @__PURE__ */ React.createElement("span", { className: "flex items-center gap-1.5" }, /* @__PURE__ */ React.createElement(IconUsers, { size: 15 }), " ", players.length, " in room"), /* @__PURE__ */ React.createElement("span", { className: "text-blue-600" }, "View players")), /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between mb-3 text-sm text-slate-500" }, /* @__PURE__ */ React.createElement("span", null, settings.timer ? fmtTimer(game.seconds) : "--:--"), /* @__PURE__ */ React.createElement("span", null, "Mistakes ", game.mistakes, "/", settings.mistakesLimit ? 3 : "\u221E"), /* @__PURE__ */ React.createElement("span", null, game.filledCount, "/", game.totalToFill)), /* @__PURE__ */ React.createElement(
       Board,
       {
         givens: game.givens,
