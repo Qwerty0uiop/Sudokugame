@@ -5,8 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>Sudoku</title>
 <script src="https://cdn.tailwindcss.com"></script>
-<script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
-<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.3.1/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.3.1/umd/react-dom.production.min.js"></script>
 
 <!-- Firebase (used only for multiplayer room sync — solo play needs none of this) -->
 <script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-app-compat.js"></script>
@@ -34,7 +34,7 @@
 -->
 <script>
   const FIREBASE_CONFIG = {
-    apiKey: "AIzaSyAWL7DwvBpeL91Xn1_dDgCTdSvTibhDhXo",
+     apiKey: "AIzaSyAWL7DwvBpeL91Xn1_dDgCTdSvTibhDhXo",
     authDomain: "sudoku-0-ee404.firebaseapp.com",
     projectId: "sudoku-0-ee404",
     storageBucket: "sudoku-0-ee404.firebasestorage.app",
@@ -44,6 +44,7 @@
 </script>
 
 <script>
+try {
 (() => {
   const { useState, useEffect, useRef, useCallback } = React;
   let db = null;
@@ -159,6 +160,7 @@
     return { puzzle: puzzle.join(""), solution: solution.join("") };
   }
   const PUZZLE_WORKER_SOURCE = `
+  ${emptyGrid.toString()}
   ${isValid.toString()}
   ${shuffle.toString()}
   ${solveRandom.toString()}
@@ -166,8 +168,12 @@
   const DIFFICULTY_CLUES = ${JSON.stringify(DIFFICULTY_CLUES)};
   ${generatePuzzle.toString()}
   self.onmessage = (e) => {
-    const result = generatePuzzle(e.data.difficulty);
-    self.postMessage(result);
+    try {
+      const result = generatePuzzle(e.data.difficulty);
+      self.postMessage(result);
+    } catch (err) {
+      self.postMessage({ error: (err && err.message) || String(err) });
+    }
   };
 `;
   let puzzleWorker = null;
@@ -188,19 +194,35 @@
         setTimeout(() => resolve(generatePuzzle(difficulty)), 20);
       });
     }
-    return new Promise((resolve, reject) => {
-      const onMessage = (e) => {
+    return new Promise((resolve) => {
+      let settled = false;
+      const finish = (result) => {
+        if (settled) return;
+        settled = true;
         cleanup();
-        resolve(e.data);
+        resolve(result);
+      };
+      const onMessage = (e) => {
+        if (e.data && e.data.error) {
+          console.warn("Worker generation failed, falling back:", e.data.error);
+          finish(generatePuzzle(difficulty));
+        } else {
+          finish(e.data);
+        }
       };
       const onError = (err) => {
-        cleanup();
-        reject(err);
+        console.warn("Worker error, falling back to main thread:", err);
+        finish(generatePuzzle(difficulty));
       };
       function cleanup() {
+        clearTimeout(timeoutId);
         worker.removeEventListener("message", onMessage);
         worker.removeEventListener("error", onError);
       }
+      const timeoutId = setTimeout(() => {
+        console.warn("Puzzle worker timed out, falling back to main thread.");
+        finish(generatePuzzle(difficulty));
+      }, 8e3);
       worker.addEventListener("message", onMessage);
       worker.addEventListener("error", onError);
       worker.postMessage({ difficulty });
@@ -789,6 +811,10 @@
   ReactDOM.createRoot(document.getElementById("root")).render(/* @__PURE__ */ React.createElement(App, null));
 })();
 
+} catch (e) {
+  console.error('Sudoku app failed to start:', e);
+  document.getElementById('root').innerHTML = '<div style="max-width:420px;margin:80px auto;padding:20px;font-family:sans-serif;text-align:center;color:#334155">'+ '<h2 style="margin-bottom:8px">Couldn\'t load the game</h2>'+ '<p style="font-size:14px;color:#64748b">A required script failed to load or run '+ '(often a blocked CDN, ad blocker, or offline connection). Open the browser '+ 'console for the exact error, or try reloading.</p>'+ '<p style="font-size:12px;color:#94a3b8;margin-top:12px">' + (e && e.message ? e.message : String(e)) + '</p>'+ '</div>';
+}
 </script>
 </body>
 </html>
