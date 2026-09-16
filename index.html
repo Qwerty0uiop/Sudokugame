@@ -49,11 +49,12 @@ try {
   const { useState, useEffect, useRef, useCallback } = React;
   let db = null;
   let firebaseReady = false;
-  const APP_BUILD = "2026-09-16-3";
+  const APP_BUILD = "2026-09-16-4";
   try {
     if (FIREBASE_CONFIG.apiKey && FIREBASE_CONFIG.apiKey !== "PASTE_YOUR_API_KEY") {
       firebase.initializeApp(FIREBASE_CONFIG);
       db = firebase.firestore();
+      db.settings({ experimentalForceLongPolling: true, merge: true });
       firebaseReady = true;
     }
   } catch (e) {
