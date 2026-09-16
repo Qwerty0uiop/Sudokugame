@@ -49,7 +49,7 @@ try {
   const { useState, useEffect, useRef, useCallback } = React;
   let db = null;
   let firebaseReady = false;
-  const APP_BUILD = "2026-09-16-5";
+  const APP_BUILD = "2026-09-16-6";
   try {
     if (FIREBASE_CONFIG.apiKey && FIREBASE_CONFIG.apiKey !== "PASTE_YOUR_API_KEY") {
       firebase.initializeApp(FIREBASE_CONFIG);
@@ -347,17 +347,42 @@ try {
       /* @__PURE__ */ React.createElement("span", { className: `absolute top-0.5 w-5 h-5 bg-white rounded-full shadow transition-all ${settings[key] ? "left-5" : "left-0.5"}` })
     )), desc && /* @__PURE__ */ React.createElement("p", { className: "text-xs text-slate-400 mt-1 pr-8" }, desc))))));
   }
-  function useGameState(puzzleStr, solutionStr, settings) {
+  function progressKey(roomId, playerId) {
+    return `sudoku-progress:${roomId}:${playerId}`;
+  }
+  function loadProgress(roomId, playerId) {
+    const saved = loadLocal(progressKey(roomId, playerId), null);
+    if (!saved) return null;
+    return {
+      grid: saved.grid,
+      notes: saved.notes.map((arr) => new Set(arr)),
+      mistakes: saved.mistakes,
+      seconds: saved.seconds,
+      finished: saved.finished,
+      failed: saved.failed
+    };
+  }
+  function saveProgress(roomId, playerId, state) {
+    saveLocal(progressKey(roomId, playerId), {
+      grid: state.grid,
+      notes: state.notes.map((s) => Array.from(s)),
+      mistakes: state.mistakes,
+      seconds: state.seconds,
+      finished: state.finished,
+      failed: state.failed
+    });
+  }
+  function useGameState(puzzleStr, solutionStr, settings, saved) {
     const givens = useRef(puzzleStr.split("").map(Number)).current;
-    const [grid, setGrid] = useState(() => puzzleStr.split("").map(Number));
-    const [notes, setNotes] = useState(() => Array.from({ length: 81 }, () => /* @__PURE__ */ new Set()));
+    const [grid, setGrid] = useState(() => saved ? saved.grid : puzzleStr.split("").map(Number));
+    const [notes, setNotes] = useState(() => saved ? saved.notes : Array.from({ length: 81 }, () => /* @__PURE__ */ new Set()));
     const [selected, setSelected] = useState(null);
-    const [mistakes, setMistakes] = useState(0);
+    const [mistakes, setMistakes] = useState(() => saved ? saved.mistakes : 0);
     const [noteMode, setNoteMode] = useState(false);
     const [activeNum, setActiveNum] = useState(null);
-    const [seconds, setSeconds] = useState(0);
-    const [finished, setFinished] = useState(false);
-    const [failed, setFailed] = useState(false);
+    const [seconds, setSeconds] = useState(() => saved ? saved.seconds : 0);
+    const [finished, setFinished] = useState(() => saved ? saved.finished : false);
+    const [failed, setFailed] = useState(() => saved ? saved.failed : false);
     const solution = useRef(solutionStr.split("").map(Number)).current;
     useEffect(() => {
       if (finished || failed || !settings.timer) return;
@@ -574,8 +599,17 @@ try {
     await roomsCollection().doc(room.id).set(room);
   }
   async function getRoomDoc(id) {
-    const snap = await roomsCollection().doc(id).get();
-    return snap.exists ? snap.data() : null;
+    let lastErr;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        const snap = await roomsCollection().doc(id).get();
+        return snap.exists ? snap.data() : null;
+      } catch (err) {
+        lastErr = err;
+        if (attempt < 2) await new Promise((r) => setTimeout(r, 500 * (attempt + 1)));
+      }
+    }
+    throw lastErr;
   }
   async function updateRoomDoc(id, data) {
     await roomsCollection().doc(id).update(data);
@@ -626,6 +660,7 @@ try {
           puzzle,
           solution,
           startTime,
+          hostId: profile.id,
           players: { [profile.id]: { name: profile.name, filled: 0, mistakes: 0, finished: false, finishTime: null, joinedAt: startTime } }
         };
         await createRoomDoc(room);
@@ -745,17 +780,34 @@ try {
     const [room, setRoom] = useState(null);
     const [error, setError] = useState(null);
     useEffect(() => {
+      let confirmedTimeout = setTimeout(() => {
+        setError((prev) => prev || "Couldn't reach the server to load this room (connection issue). Your progress is saved locally \u2014 try reloading once you're back online.");
+      }, 12e3);
       const unsub = roomsCollection().doc(roomId).onSnapshot(
+        { includeMetadataChanges: true },
         (snap) => {
-          if (snap.exists) setRoom(snap.data());
-          else setError("This room no longer exists.");
+          if (snap.exists) {
+            clearTimeout(confirmedTimeout);
+            setRoom(snap.data());
+            setError(null);
+            return;
+          }
+          if (!snap.metadata.fromCache) {
+            clearTimeout(confirmedTimeout);
+            setError("This room no longer exists \u2014 the host may have closed it.");
+            saveLocal("sudoku-active-room", null);
+          }
         },
         (err) => {
           console.error("Room load error:", err);
+          clearTimeout(confirmedTimeout);
           setError(err.message || String(err));
         }
       );
-      return unsub;
+      return () => {
+        clearTimeout(confirmedTimeout);
+        unsub();
+      };
     }, [roomId]);
     if (error) {
       return /* @__PURE__ */ React.createElement("div", { className: "max-w-md mx-auto px-4 pt-16 text-center" }, /* @__PURE__ */ React.createElement("p", { className: "text-rose-600 text-sm mb-4" }, error), /* @__PURE__ */ React.createElement("button", { onClick: onExit, className: "text-blue-600 flex items-center gap-1 justify-center mx-auto" }, /* @__PURE__ */ React.createElement(IconArrowLeft, { size: 18 }), " Back to lobby"));
@@ -778,8 +830,16 @@ try {
     const [room, setRoom] = useState(liveRoom);
     const [showSettings, setShowSettings] = useState(false);
     const [showPlayers, setShowPlayers] = useState(false);
+    const [closing, setClosing] = useState(false);
     useEffect(() => setRoom(liveRoom), [liveRoom]);
-    const game = useGameState(room.puzzle, room.solution, settings);
+    useEffect(() => {
+      saveLocal("sudoku-active-room", roomId);
+    }, [roomId]);
+    const savedProgress = useRef(loadProgress(roomId, profile.id)).current;
+    const game = useGameState(room.puzzle, room.solution, settings, savedProgress);
+    useEffect(() => {
+      saveProgress(roomId, profile.id, game);
+    }, [game.grid, game.notes, game.mistakes, game.seconds, game.finished, game.failed]);
     useEffect(() => {
       const push = async () => {
         var _a;
@@ -800,23 +860,27 @@ try {
       const t = setTimeout(push, 400);
       return () => clearTimeout(t);
     }, [game.filledCount, game.mistakes, game.finished]);
-    async function leaveRoom() {
-      try {
-        const fresh = await getRoomDoc(roomId);
-        if (fresh) {
-          delete fresh.players[profile.id];
-          if (Object.keys(fresh.players).length === 0) await deleteRoomDoc(roomId);
-          else await updateRoomDoc(roomId, { players: fresh.players });
-        }
-      } catch (e) {
-      }
+    function leaveRoom() {
+      saveLocal("sudoku-active-room", null);
       onExit();
+    }
+    async function closeRoomForEveryone() {
+      setClosing(true);
+      try {
+        await deleteRoomDoc(roomId);
+        saveLocal("sudoku-active-room", null);
+        onExit();
+      } catch (e) {
+        console.error("Failed to close room:", e);
+        setClosing(false);
+      }
     }
     const players = Object.entries(room.players || {}).sort((a, b) => {
       if (a[1].finished !== b[1].finished) return a[1].finished ? -1 : 1;
       if (a[1].finished && b[1].finished) return new Date(a[1].finishTime) - new Date(b[1].finishTime);
       return b[1].filled - a[1].filled;
     });
+    const isHost = room.hostId === profile.id;
     return /* @__PURE__ */ React.createElement("div", { className: "max-w-md mx-auto px-4 pb-10" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between py-4" }, /* @__PURE__ */ React.createElement("button", { onClick: leaveRoom, className: "text-slate-500 flex items-center gap-1" }, /* @__PURE__ */ React.createElement(IconArrowLeft, { size: 18 }), " Leave"), /* @__PURE__ */ React.createElement("div", { className: "text-center" }, /* @__PURE__ */ React.createElement("p", { className: "font-display text-sm text-slate-900 flex items-center gap-1 justify-center" }, room.isPrivate && /* @__PURE__ */ React.createElement(IconLock, { size: 12 }), " ", room.name), /* @__PURE__ */ React.createElement("p", { className: "text-[11px] text-slate-400" }, "started ", fmtClock(room.startTime), " \xB7 ", timeAgo(room.startTime)), /* @__PURE__ */ React.createElement("p", { className: "text-[10px] text-slate-300" }, "code: ", /* @__PURE__ */ React.createElement("span", { className: "font-mono" }, room.id))), /* @__PURE__ */ React.createElement("button", { onClick: () => setShowSettings(true), className: "text-slate-500" }, /* @__PURE__ */ React.createElement(IconSettings, { size: 20 }))), /* @__PURE__ */ React.createElement("button", { onClick: () => setShowPlayers(true), className: "w-full flex items-center justify-between bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 mb-3 text-sm text-slate-600" }, /* @__PURE__ */ React.createElement("span", { className: "flex items-center gap-1.5" }, /* @__PURE__ */ React.createElement(IconUsers, { size: 15 }), " ", players.length, " in room"), /* @__PURE__ */ React.createElement("span", { className: "text-blue-600" }, "View players")), /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between mb-3 text-sm text-slate-500" }, /* @__PURE__ */ React.createElement("span", null, settings.timer ? fmtTimer(game.seconds) : "--:--"), /* @__PURE__ */ React.createElement("span", null, "Mistakes ", game.mistakes, "/", settings.mistakesLimit ? 3 : "\u221E"), /* @__PURE__ */ React.createElement("span", null, game.filledCount, "/", game.totalToFill)), /* @__PURE__ */ React.createElement(
       Board,
       {
@@ -828,7 +892,17 @@ try {
         settings,
         invalidCells: game.invalidCells
       }
-    ), /* @__PURE__ */ React.createElement(NumberPad, { game, settings }), /* @__PURE__ */ React.createElement(Toolbar, { game }), game.finished && /* @__PURE__ */ React.createElement("div", { className: "mt-6 text-center p-5 bg-emerald-50 rounded-xl border border-emerald-100" }, /* @__PURE__ */ React.createElement(IconTrophy, { size: 28, className: "mx-auto text-emerald-600 mb-2" }), /* @__PURE__ */ React.createElement("p", { className: "font-display text-lg text-emerald-800" }, "You solved it in ", fmtTimer(game.seconds)), /* @__PURE__ */ React.createElement("button", { onClick: () => setShowPlayers(true), className: "mt-3 px-4 py-2 bg-emerald-600 text-white rounded-lg text-sm" }, "See room results")), game.failed && /* @__PURE__ */ React.createElement("div", { className: "mt-6 text-center p-5 bg-rose-50 rounded-xl border border-rose-100" }, /* @__PURE__ */ React.createElement("p", { className: "font-display text-lg text-rose-700" }, "Out of mistakes \u2014 others may still be solving")), showSettings && /* @__PURE__ */ React.createElement(SettingsPanel, { settings, setSettings, onClose: () => setShowSettings(false) }), showPlayers && /* @__PURE__ */ React.createElement("div", { className: "fixed inset-0 bg-slate-900/40 z-50 flex items-end sm:items-center justify-center", onClick: () => setShowPlayers(false) }, /* @__PURE__ */ React.createElement("div", { className: "bg-white w-full sm:max-w-sm sm:rounded-2xl rounded-t-2xl p-5 max-h-[80vh] overflow-y-auto", onClick: (e) => e.stopPropagation() }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between mb-1" }, /* @__PURE__ */ React.createElement("h3", { className: "font-display text-lg text-slate-900" }, room.name), /* @__PURE__ */ React.createElement("button", { onClick: () => setShowPlayers(false), className: "text-slate-400" }, /* @__PURE__ */ React.createElement(IconX, { size: 20 }))), /* @__PURE__ */ React.createElement("p", { className: "text-xs text-slate-400 mb-4" }, "Started ", fmtClock(room.startTime), " \xB7 ", timeAgo(room.startTime), " \xB7 ", room.difficulty), /* @__PURE__ */ React.createElement("div", { className: "space-y-2" }, players.map(([pid, p]) => /* @__PURE__ */ React.createElement("div", { key: pid, className: "flex items-center justify-between px-3 py-2 bg-slate-50 rounded-lg" }, /* @__PURE__ */ React.createElement("span", { className: "flex items-center gap-2 text-sm text-slate-700" }, p.finished ? /* @__PURE__ */ React.createElement(IconTrophy, { size: 14, className: "text-amber-500" }) : /* @__PURE__ */ React.createElement(IconDot, { size: 8, className: "text-blue-400" }), p.name, pid === profile.id ? " (you)" : ""), /* @__PURE__ */ React.createElement("span", { className: "text-xs text-slate-400" }, p.finished ? "Finished" : `${p.filled}/81`)))))));
+    ), /* @__PURE__ */ React.createElement(NumberPad, { game, settings }), /* @__PURE__ */ React.createElement(Toolbar, { game }), game.finished && /* @__PURE__ */ React.createElement("div", { className: "mt-6 text-center p-5 bg-emerald-50 rounded-xl border border-emerald-100" }, /* @__PURE__ */ React.createElement(IconTrophy, { size: 28, className: "mx-auto text-emerald-600 mb-2" }), /* @__PURE__ */ React.createElement("p", { className: "font-display text-lg text-emerald-800" }, "You solved it in ", fmtTimer(game.seconds)), /* @__PURE__ */ React.createElement("button", { onClick: () => setShowPlayers(true), className: "mt-3 px-4 py-2 bg-emerald-600 text-white rounded-lg text-sm" }, "See room results")), game.failed && /* @__PURE__ */ React.createElement("div", { className: "mt-6 text-center p-5 bg-rose-50 rounded-xl border border-rose-100" }, /* @__PURE__ */ React.createElement("p", { className: "font-display text-lg text-rose-700" }, "Out of mistakes \u2014 others may still be solving")), showSettings && /* @__PURE__ */ React.createElement(SettingsPanel, { settings, setSettings, onClose: () => setShowSettings(false) }), showPlayers && /* @__PURE__ */ React.createElement("div", { className: "fixed inset-0 bg-slate-900/40 z-50 flex items-end sm:items-center justify-center", onClick: () => setShowPlayers(false) }, /* @__PURE__ */ React.createElement("div", { className: "bg-white w-full sm:max-w-sm sm:rounded-2xl rounded-t-2xl p-5 max-h-[80vh] overflow-y-auto", onClick: (e) => e.stopPropagation() }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between mb-1" }, /* @__PURE__ */ React.createElement("h3", { className: "font-display text-lg text-slate-900" }, room.name), /* @__PURE__ */ React.createElement("button", { onClick: () => setShowPlayers(false), className: "text-slate-400" }, /* @__PURE__ */ React.createElement(IconX, { size: 20 }))), /* @__PURE__ */ React.createElement("p", { className: "text-xs text-slate-400 mb-4" }, "Started ", fmtClock(room.startTime), " \xB7 ", timeAgo(room.startTime), " \xB7 ", room.difficulty), /* @__PURE__ */ React.createElement("div", { className: "space-y-2" }, players.map(([pid, p]) => /* @__PURE__ */ React.createElement("div", { key: pid, className: "flex items-center justify-between px-3 py-2 bg-slate-50 rounded-lg" }, /* @__PURE__ */ React.createElement("span", { className: "flex items-center gap-2 text-sm text-slate-700" }, p.finished ? /* @__PURE__ */ React.createElement(IconTrophy, { size: 14, className: "text-amber-500" }) : /* @__PURE__ */ React.createElement(IconDot, { size: 8, className: "text-blue-400" }), p.name, pid === profile.id ? " (you)" : "", pid === room.hostId ? " \xB7 host" : ""), /* @__PURE__ */ React.createElement("span", { className: "text-xs text-slate-400" }, p.finished ? "Finished" : `${p.filled}/81`)))), isHost && /* @__PURE__ */ React.createElement("div", { className: "mt-4 pt-4 border-t border-slate-100" }, /* @__PURE__ */ React.createElement(
+      "button",
+      {
+        disabled: closing,
+        onClick: () => {
+          if (confirm("Close this room for everyone? Nobody will be able to rejoin it afterwards.")) closeRoomForEveryone();
+        },
+        className: "w-full text-rose-600 text-sm font-medium py-2"
+      },
+      closing ? "Closing\u2026" : "Close room for everyone"
+    ), /* @__PURE__ */ React.createElement("p", { className: "text-[10px] text-slate-400 text-center mt-1" }, "Only you (the host) see this. The room otherwise stays open until someone closes it \u2014 it's never deleted just because everyone stepped away.")))));
   }
   function ProfileGate({ onReady }) {
     const [name, setName] = useState("");
@@ -851,9 +925,9 @@ try {
   }
   function App() {
     const [profile, setProfile] = useState(() => loadLocal("sudoku-profile", null));
-    const [screen, setScreen] = useState("home");
+    const [screen, setScreen] = useState(() => loadLocal("sudoku-active-room", null) ? "room" : "home");
     const [difficulty, setDifficulty] = useState("Medium");
-    const [activeRoom, setActiveRoom] = useState(null);
+    const [activeRoom, setActiveRoom] = useState(() => loadLocal("sudoku-active-room", null));
     const [settings, setSettings] = useState(() => ({ ...DEFAULT_SETTINGS, ...loadLocal("sudoku-settings", {}) }));
     useEffect(() => saveLocal("sudoku-settings", settings), [settings]);
     if (!profile) return /* @__PURE__ */ React.createElement(ProfileGate, { onReady: setProfile });
